@@ -1,84 +1,42 @@
 package com.rxf113.multithreadtransaction;
 
 import com.rxf113.multithreadtransaction.mapper.DemoMapper;
+import com.rxf113.multithreadtransaction.util.Pair;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
-import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.DefaultTransactionDefinition;
-import org.springframework.transaction.support.TransactionTemplate;
 
+import javax.annotation.Resource;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
-import java.util.Objects;
-import java.util.concurrent.CompletableFuture;
-import java.util.stream.IntStream;
 
 @SpringBootTest
 class MultiThreadTransactionApplicationTests {
 
-    @Autowired
+    @Resource
     private DemoMapper demoMapper;
 
-    @Autowired
-    private TransactionTemplate transactionTemplate;
-
-    @Autowired
-    private PlatformTransactionManager platformTransactionManager;
+    @Resource
+    private MultiThreadTransaction<String[]> multiThreadTransaction;
 
     @Test
     @Transactional(rollbackFor = Exception.class)
     void contextLoads() {
-        insertSS();
+        List<Pair<String, String>> list = new ArrayList<>();
+        Collections.addAll(list, Pair.pair("1", "name1"), Pair.pair("4", "name2"), Pair.pair("5", "name3"));
+
+        multiThreadTransaction.initCounter(list.size());
+
+        for (Pair<String, String> pair : list) {
+            multiThreadTransaction.execute(params -> {
+                System.out.println(4888888);
+                demoMapper.insert(params[0], params[1]);
+            }, new String[]{pair.first, pair.second});
+        }
+
+        multiThreadTransaction.sync();
+
+        System.out.println("success!");
     }
-
-    public void insertSS() {
-        List<CompletableFuture<Integer>> cfList = new ArrayList<>(7);
-        List<TransactionStatus> transactionStatuses = new ArrayList<>(5);
-
-
-
-      //  transactionTemplate.execute(status -> {
-            IntStream.range(9, 14).forEach(i -> {
-                try {
-
-                    CompletableFuture<Integer> completableFuture = CompletableFuture.supplyAsync(() -> {
-                        TransactionStatus transactionStatus = platformTransactionManager.getTransaction(new DefaultTransactionDefinition());
-                        int res = demoMapper.insert(Integer.toString(i), Integer.toString(i));
-                        Objects.requireNonNull(transactionTemplate.getTransactionManager()).rollback(transactionStatus);
-                        return res;
-                    });
-                    cfList.add(completableFuture);
-                } catch (Exception e) {
-                    System.out.println(123);
-                }
-            });
-
-        //    return 250;
-     //   });
-
-        CompletableFuture<Void> allOf = CompletableFuture.allOf(cfList.toArray(new CompletableFuture[0]));
-        allOf.join();
-        System.out.println("都好了？");
-
-    }
-
 }
-
-//@SpringBootTest
-//public class SampleTest {
-//
-//
-//
-//    @Test
-//    public void testSelect() {
-//        System.out.println(("----- selectAll method test ------"));
-//        List<User> userList = userMapper.selectList(null);
-//        Assert.assertEquals(5, userList.size());
-//        userList.forEach(System.out::println);
-//    }
-//
-//}

@@ -1,9 +1,8 @@
 package com.rxf113.multithreadtransaction;
 
 import org.mybatis.spring.annotation.MapperScan;
+import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-
-import java.util.stream.IntStream;
 
 /**
  * @author rxf113
@@ -13,8 +12,7 @@ import java.util.stream.IntStream;
 public class MultiThreadTransactionApplication {
 
     public static void main(String[] args) {
-        IntStream.range(0, 6).forEach(System.out::println);
-//        SpringApplication.run(MultiThreadTransactionApplication.class, args);
+        SpringApplication.run(MultiThreadTransactionApplication.class, args);
     }
 
 }
