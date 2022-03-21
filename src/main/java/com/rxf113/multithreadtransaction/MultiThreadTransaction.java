@@ -26,7 +26,7 @@ import java.util.function.Consumer;
  */
 @Component
 @Scope("prototype")
-public class MultiThreadTransaction<P> {
+public class MultiThreadTransaction {
 
     Logger logger = LoggerFactory.getLogger(MultiThreadTransaction.class);
 
@@ -41,54 +41,82 @@ public class MultiThreadTransaction<P> {
     @Resource
     private PlatformTransactionManager platformTransactionManager;
 
-    public void initCounter(int taskNum) {
-        countDownLatch = new CountDownLatch(taskNum);
-    }
-
     CountDownLatch countDownLatch;
 
-    AtomicBoolean wrong = new AtomicBoolean(false);
+    AtomicBoolean wrong;
 
-    private final List<CompletableFuture<?>> completableFutures = new ArrayList<>();
+    List<CompletableFuture<Void>> completableFutures;
 
-    public void execute(Consumer<P> consumer, P param) {
-        CompletableFuture<?> completableFuture = CompletableFuture.supplyAsync(() -> {
+    private List<Exception> exceptions = new ArrayList<>();
 
-            TransactionStatus transactionStatus = platformTransactionManager.getTransaction(new DefaultTransactionDefinition());
+    @SuppressWarnings("all")
+    public static <T> List<List<? extends T>> splitList(List<List<? extends T>> res, List<? extends T> list, int batchSize) {
+        if (list.size() < batchSize) {
+            res.add(list);
+            return res;
+        }
+        res.add(list.subList(0, batchSize));
+        return splitList(res, list.subList(batchSize, list.size()), batchSize);
+    }
 
-            try {
-                //business
-                consumer.accept(param);
-            } catch (Exception e) {
-                logger.error("business error!");
-                wrong.set(true);
-            } finally {
-                countDownLatch.countDown();
-            }
+    public <T> void executeWithTransaction(List<? extends T> dataList, int batchSize, Consumer<List<? extends T>> consumer) {
+        //拆分数据
+        List<List<? extends T>> splitList = splitList(new ArrayList<>(), dataList, batchSize);
+        //初始化属性
+        countDownLatch = new CountDownLatch(splitList.size());
+        wrong = new AtomicBoolean(false);
+        completableFutures = new ArrayList<>(splitList.size());
 
-            try {
-                countDownLatch.await(TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
-                logger.error("wait timeout!");
-                wrong.set(true);
-                Thread.currentThread().interrupt();
-            }
+        for (List<? extends T> simpleList : splitList) {
 
-            if (wrong.get()) {
-                Objects.requireNonNull(transactionTemplate.getTransactionManager()).rollback(transactionStatus);
-            } else {
-                Objects.requireNonNull(transactionTemplate.getTransactionManager()).commit(transactionStatus);
-            }
+            CompletableFuture<Void> completableFuture = CompletableFuture.runAsync(() -> {
 
-            return null;
+                TransactionStatus transactionStatus = platformTransactionManager.getTransaction(new DefaultTransactionDefinition());
 
-        });
-        completableFutures.add(completableFuture);
+                try {
+                    //business
+                    consumer.accept(simpleList);
+                } catch (Exception e) {
+                    //不抛异常，在最后统一处理
+                    exceptions.add(e);
+                    wrong.set(true);
+                } finally {
+                    countDownLatch.countDown();
+                }
+
+                try {
+                    countDownLatch.await(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    logger.error("wait timeout!");
+                    wrong.set(true);
+                    Thread.currentThread().interrupt();
+                }
+
+                if (wrong.get()) {
+                    Objects.requireNonNull(transactionTemplate.getTransactionManager()).rollback(transactionStatus);
+                } else {
+                    Objects.requireNonNull(transactionTemplate.getTransactionManager()).commit(transactionStatus);
+                }
+            });
+            completableFutures.add(completableFuture);
+        }
+        CompletableFuture.allOf(completableFutures.toArray(new CompletableFuture[0])).join();
     }
 
 
-    public void sync() {
-        CompletableFuture<Void> allOf = CompletableFuture.allOf(completableFutures.toArray(new CompletableFuture[0]));
-        allOf.join();
+    /**
+     * 同步返回
+     *
+     * @return true: 成功   false:失败,可动再获取Exceptions
+     */
+    public boolean syncAndResult() {
+        CompletableFuture.allOf(completableFutures.toArray(new CompletableFuture[0]))
+                .join();
+        return !wrong.get();
     }
+
+    public List<Exception> getExceptions() {
+        return exceptions;
+    }
+
 }

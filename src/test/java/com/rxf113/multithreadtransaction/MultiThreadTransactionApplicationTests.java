@@ -18,7 +18,7 @@ class MultiThreadTransactionApplicationTests {
     private DemoMapper demoMapper;
 
     @Resource
-    private MultiThreadTransaction<Pair> multiThreadTransaction;
+    private MultiThreadTransaction multiThreadTransaction;
 
     @Test
     @Transactional(rollbackFor = Exception.class)
@@ -26,18 +26,17 @@ class MultiThreadTransactionApplicationTests {
         List<Pair<String, String>> list = new ArrayList<>();
         Collections.addAll(list, Pair.pair("1", "name1"), Pair.pair("4", "name2"), Pair.pair("5", "name3"));
 
-        multiThreadTransaction.initCounter(list.size());
-
-        for (Pair<String, String> pair : list) {
-            multiThreadTransaction.execute(params -> {
-                //业务代码
-                System.out.println(4888888);
-                demoMapper.insert((String) params.first, (String) params.second);
-            }, pair);
+        multiThreadTransaction.executeWithTransaction(list, 2, (simpleList) -> {
+            for (Pair<String, String> pair : simpleList) {
+                demoMapper.insert(pair.first, pair.second);
+            }
+        });
+        boolean result = multiThreadTransaction.syncAndResult();
+        if (result) {
+            System.out.println("success!");
+        } else {
+            //do something...
         }
 
-        multiThreadTransaction.sync();
-
-        System.out.println("success!");
     }
 }
