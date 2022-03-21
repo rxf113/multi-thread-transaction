@@ -36,7 +36,7 @@ public class DemoController {
         List<Pair<String, String>> list = new ArrayList<>();
         Collections.addAll(list, Pair.pair("6", "name1"), Pair.pair("4", "name2"), Pair.pair("5", "name3"));
 
-        multiThreadTransaction.executeWithTransaction(list, 2, (simpleList) -> {
+        multiThreadTransaction.executeWithTransaction(list, 2, simpleList -> {
             for (Pair<String, String> pair : simpleList) {
                 demoMapper.insert(pair.first, pair.second);
             }
