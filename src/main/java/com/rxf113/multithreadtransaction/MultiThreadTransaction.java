@@ -25,15 +25,9 @@ import java.util.function.Consumer;
  * @author rxf113
  */
 @Component
-@Scope("prototype")
 public class MultiThreadTransaction {
 
     Logger logger = LoggerFactory.getLogger(MultiThreadTransaction.class);
-
-    /**
-     * 等待所有线程完成的超时时间 / 秒
-     */
-    private static final Integer TIMEOUT_SECONDS = 2;
 
     @Resource
     private TransactionTemplate transactionTemplate;
@@ -41,17 +35,24 @@ public class MultiThreadTransaction {
     @Resource
     private PlatformTransactionManager platformTransactionManager;
 
-    CountDownLatch countDownLatch;
+    /**
+     * 等待所有线程完成的超时时间 / 秒
+     */
+    private static final Integer TIMEOUT_SECONDS = 2;
 
-    AtomicBoolean wrong;
 
-    List<CompletableFuture<Void>> completableFutures;
-
-    private List<Exception> exceptions = new ArrayList<>();
-
+    /**
+     * 拆分list
+     *
+     * @param res       结果
+     * @param list      原始list
+     * @param batchSize 每一批的数量
+     * @param <T>
+     * @return
+     */
     @SuppressWarnings("all")
     public static <T> List<List<? extends T>> splitList(List<List<? extends T>> res, List<? extends T> list, int batchSize) {
-        if (list.size() < batchSize) {
+        if (list.size() <= batchSize) {
             res.add(list);
             return res;
         }
@@ -59,22 +60,57 @@ public class MultiThreadTransaction {
         return splitList(res, list.subList(batchSize, list.size()), batchSize);
     }
 
-    public <T> void executeWithTransaction(List<? extends T> dataList, int batchSize, Consumer<List<? extends T>> consumer) {
+    /**
+     * 执行(没有事务)
+     *
+     * @param dataList  原始list
+     * @param batchSize 每一批的数量
+     * @param consumer  具体的业务逻辑
+     */
+    public <T> void execute(List<? extends T> dataList, int batchSize, Consumer<List<? extends T>> consumer) {
+        //拆分数据
+        List<List<? extends T>> splitList = splitList(new ArrayList<>(), dataList, batchSize);
+        //记录 CompletableFuture
+        List<CompletableFuture<Void>> completableFutures = new ArrayList<>(splitList.size());
+
+        for (List<? extends T> simpleList : splitList) {
+            CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
+                consumer.accept(simpleList);
+            });
+            completableFutures.add(future);
+        }
+        //等待所有任务完成
+        CompletableFuture.allOf(completableFutures.toArray(new CompletableFuture[0])).join();
+    }
+
+    /**
+     * 执行(有事务)
+     *
+     * @param dataList  原始list
+     * @param batchSize 每一批的数量
+     * @param consumer  具体的业务逻辑
+     * @return Result 自定义返回
+     */
+    public <T> Result executeWithTransaction(List<? extends T> dataList, int batchSize, Consumer<List<? extends T>> consumer) {
         //拆分数据
         List<List<? extends T>> splitList = splitList(new ArrayList<>(), dataList, batchSize);
         //初始化属性
-        countDownLatch = new CountDownLatch(splitList.size());
-        wrong = new AtomicBoolean(false);
-        completableFutures = new ArrayList<>(splitList.size());
+        //记录线程执行完
+        final CountDownLatch countDownLatch = new CountDownLatch(splitList.size());
+        //错误标识
+        final AtomicBoolean wrong = new AtomicBoolean(false);
+        //记录所有CompletableFuture
+        final List<CompletableFuture<Void>> completableFutures = new ArrayList<>(splitList.size());
+        //记录所有异常
+        final List<Exception> exceptions = new ArrayList<>();
 
         for (List<? extends T> simpleList : splitList) {
 
             CompletableFuture<Void> completableFuture = CompletableFuture.runAsync(() -> {
-
+                //每个线程开启一个事务
                 TransactionStatus transactionStatus = platformTransactionManager.getTransaction(new DefaultTransactionDefinition());
-
                 try {
-                    //business
+                    //具体业务
                     consumer.accept(simpleList);
                 } catch (Exception e) {
                     //不抛异常，在最后统一处理
@@ -92,6 +128,7 @@ public class MultiThreadTransaction {
                     Thread.currentThread().interrupt();
                 }
 
+                //提交或者回滚
                 if (wrong.get()) {
                     Objects.requireNonNull(transactionTemplate.getTransactionManager()).rollback(transactionStatus);
                 } else {
@@ -100,23 +137,30 @@ public class MultiThreadTransaction {
             });
             completableFutures.add(completableFuture);
         }
+        //等待完成
         CompletableFuture.allOf(completableFutures.toArray(new CompletableFuture[0])).join();
+        //返回结果
+        if (wrong.get()) {
+            return new Result(false, exceptions);
+        }
+        return new Result(true, null);
     }
 
+    public static class Result {
+        private final boolean success;
+        private final List<Exception> exceptions;
 
-    /**
-     * 同步返回
-     *
-     * @return true: 成功   false:失败,可动再获取Exceptions
-     */
-    public boolean syncAndResult() {
-        CompletableFuture.allOf(completableFutures.toArray(new CompletableFuture[0]))
-                .join();
-        return !wrong.get();
+        public Result(boolean success, List<Exception> exceptions) {
+            this.success = success;
+            this.exceptions = exceptions;
+        }
+
+        public boolean isSuccess() {
+            return success;
+        }
+
+        public List<Exception> getExceptions() {
+            return exceptions;
+        }
     }
-
-    public List<Exception> getExceptions() {
-        return exceptions;
-    }
-
 }

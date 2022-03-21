@@ -23,30 +23,27 @@ public class DemoController {
     @Resource
     private MultiThreadTransaction multiThreadTransaction;
 
-    @Lookup
-    public MultiThreadTransaction getMultiThreadTransaction() {
-        return multiThreadTransaction;
-    }
-
     @Resource
     private DemoMapper demoMapper;
 
     @GetMapping(value = "multi")
     public Object demo() {
         List<Pair<String, String>> list = new ArrayList<>();
-        Collections.addAll(list, Pair.pair("6", "name1"), Pair.pair("4", "name2"), Pair.pair("5", "name3"));
+        Collections.addAll(list, Pair.pair("k1", "v1"), Pair.pair("k2", "v2"), Pair.pair("k3", "v3"));
+//        for (Pair<String, String> pair : list) {
+//            demoMapper.insert(pair.first, pair.second);
+//        }
 
-        multiThreadTransaction.executeWithTransaction(list, 2, simpleList -> {
+        MultiThreadTransaction.Result result = multiThreadTransaction.executeWithTransaction(list, 2, simpleList -> {
             for (Pair<String, String> pair : simpleList) {
                 demoMapper.insert(pair.first, pair.second);
             }
         });
-        boolean result = multiThreadTransaction.syncAndResult();
-        if (!result) {
-            List<Exception> exceptions = multiThreadTransaction.getExceptions();
-            //todo do something
+        if(!result.isSuccess()){
+            List<Exception> exceptions = result.getExceptions();
+            //do something
         }
-        return "null";
+        return null;
     }
 
 }
