@@ -1,12 +1,13 @@
 package com.rxf113.multithreadtransaction.controller;
 
 import com.rxf113.multithreadtransaction.MultiThreadTransaction;
-import com.rxf113.multithreadtransaction.util.Pair;
 import com.rxf113.multithreadtransaction.mapper.DemoMapper;
-import org.springframework.beans.factory.annotation.Lookup;
+import com.rxf113.multithreadtransaction.util.Pair;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.context.request.RequestAttributes;
+import org.springframework.web.context.request.RequestContextHolder;
 
 import javax.annotation.Resource;
 import java.util.ArrayList;
@@ -34,12 +35,18 @@ public class DemoController {
 //            demoMapper.insert(pair.first, pair.second);
 //        }
 
+        //手动在主线程获取requestAttributes
+        RequestAttributes requestAttributes = RequestContextHolder.getRequestAttributes();
+
         MultiThreadTransaction.Result result = multiThreadTransaction.executeWithTransaction(list, 2, simpleList -> {
+            //放入子线程里
+            RequestContextHolder.setRequestAttributes(requestAttributes);
+
             for (Pair<String, String> pair : simpleList) {
                 demoMapper.insert(pair.first, pair.second);
             }
         });
-        if(!result.isSuccess()){
+        if (!result.isSuccess()) {
             List<Exception> exceptions = result.getExceptions();
             //do something
         }

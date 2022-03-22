@@ -2,7 +2,6 @@ package com.rxf113.multithreadtransaction;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionStatus;
@@ -146,10 +145,20 @@ public class MultiThreadTransaction {
         return new Result(true, null);
     }
 
+    /**
+     * 自定义返回类
+     */
     public static class Result {
         private final boolean success;
         private final List<Exception> exceptions;
 
+        /**
+         * 设置是否将 LocaleContext 和 RequestAttributes 公开为子线程可继承（使用 InheritableThreadLocal）。默认为“false”，
+         * 以避免对生成的后台线程产生副作用。将此切换为“true”以启用自定义子线程的继承，
+         * 这些子线程在请求处理期间产生并仅用于此请求（即，在其初始任务之后结束，不重用线程）。
+         * 警告：如果您正在访问配置为可能按需添加新线程的线程池（例如，JDK java.util.concurrent.ThreadPoolExecutor），
+         * 请不要对子线程使用继承，因为这会将继承的上下文暴露给这样的池线。
+         */
         public Result(boolean success, List<Exception> exceptions) {
             this.success = success;
             this.exceptions = exceptions;

@@ -1,4 +1,5 @@
-## spring 中多线程批处理及事务问题
+**<center> spring 中多线程批处理及事务问题 & [springmvc 子线程获取不到 RequestAttributes 问题](#springmvc) </center>**
+------
 
 一个功能，需要对大量数据进行操作、验证、写库等等。比如处理一个一百万条数据的 List ，采用多线程优化一下，简单的思路是拆分这个 List 比如拆分成十个List 一个List 十万条数据，然后用十个线程执行。
 
@@ -92,7 +93,9 @@
                 TransactionStatus transactionStatus = platformTransactionManager.getTransaction(new DefaultTransactionDefinition());
                 try {
                     //具体业务
-                    consumer.accept(simpleList);
+                    if(!wrong.get()){
+                        consumer.accept(simpleList);
+                    }               
                 } catch (Exception e) {
                     //不抛异常，在最后统一处理
                     exceptions.add(e);
@@ -126,6 +129,27 @@
             return new Result(false, exceptions);
         }
         return new Result(true, null);
+    }
+
+    /**
+     * 自定义返回类
+     */
+    public static class Result {
+        private final boolean success;
+        private final List<Exception> exceptions;
+    
+        public Result(boolean success, List<Exception> exceptions) {
+            this.success = success;
+            this.exceptions = exceptions;
+        }
+    
+        public boolean isSuccess() {
+            return success;
+        }
+    
+        public List<Exception> getExceptions() {
+            return exceptions;
+        }
     }
 ```
 
@@ -167,9 +191,119 @@ MultiThreadTransaction.Result result = multiThreadTransaction.executeWithTransac
     }
 });
 
+// 处理异常等
 //    if(!result.isSuccess()){
 //       List<Exception> exceptions = result.getExceptions();
 //        //do something
 //    }   
 ```
 
+
+<div id="springmvc"></div>
+
+### springmvc 子线程获取不到 RequestAttributes 问题
+
+
+根据上面这种方式，在实际业务中测试了一下，果然出现了问题，子线程获取不到用户信息。我们的用户信息是，对当前线程request里的jwt信息解析出来的，现在问题是
+
+org.springframework.web.context.request.RequestContextHolder 类 的 getRequestAttributes 方法，获取不到 RequestAttributes，自然也获取不到request
+
+```java
+@Nullable
+public static RequestAttributes getRequestAttributes() {
+    RequestAttributes attributes = requestAttributesHolder.get();
+    if (attributes == null) {
+        attributes = inheritableRequestAttributesHolder.get();
+    }
+    return attributes;
+}
+```
+
+
+
+看这代码发现有个 inheritableRequestAttributesHolder ，如果 inheritableRequestAttributesHolder 里有东西的话子线程是能获取到的，
+
+可是再看下代码，发现 springmvc 默认 inheritable 是 false，没开启 inheritableRequestAttributesHolder
+
+```java
+public static void setRequestAttributes(@Nullable RequestAttributes attributes) {
+   setRequestAttributes(attributes, false);
+}
+
+/**
+ * Bind the given RequestAttributes to the current thread.
+ * @param attributes the RequestAttributes to expose,
+ * or {@code null} to reset the thread-bound context
+ * @param inheritable whether to expose the RequestAttributes as inheritable
+ * for child threads (using an {@link InheritableThreadLocal})
+ */
+public static void setRequestAttributes(@Nullable RequestAttributes attributes, boolean inheritable) {
+   if (attributes == null) {
+      resetRequestAttributes();
+   }
+   else {
+      if (inheritable) {
+         inheritableRequestAttributesHolder.set(attributes);
+         requestAttributesHolder.remove();
+      }
+      else {
+         requestAttributesHolder.set(attributes);
+         inheritableRequestAttributesHolder.remove();
+      }
+   }
+}
+```
+
+
+
+于是我就想能不能添加个配置，开启 inheritable，再看看源码，找到了 org.springframework.web.filter.RequestContextFilter 类
+
+```java
+private boolean threadContextInheritable = false;
+
+
+	/**
+	 * Set whether to expose the LocaleContext and RequestAttributes as inheritable
+	 * for child threads (using an {@link java.lang.InheritableThreadLocal}).
+	 * <p>Default is "false", to avoid side effects on spawned background threads.
+	 * Switch this to "true" to enable inheritance for custom child threads which
+	 * are spawned during request processing and only used for this request
+	 * (that is, ending after their initial task, without reuse of the thread).
+	 * <p><b>WARNING:</b> Do not use inheritance for child threads if you are
+	 * accessing a thread pool which is configured to potentially add new threads
+	 * on demand (e.g. a JDK {@link java.util.concurrent.ThreadPoolExecutor}),
+	 * since this will expose the inherited context to such a pooled thread.
+	 */
+
+		
+//翻译一下 =================
+
+	/**
+      * 设置是否将 LocaleContext 和 RequestAttributes 公开为子线程可继承（使用 InheritableThreadLocal）。默认为“false”，
+      * 以避免对生成的后台线程产生副作用。将此切换为“true”以启用自定义子线程的继承，
+      * 这些子线程在请求处理期间产生并仅用于此请求（即，在其初始任务之后结束，不重用线程）。
+      * 警告：如果您正在访问配置为可能按需添加新线程的线程池（例如，JDK java.util.concurrent.ThreadPoolExecutor），
+      * 请不要对子线程使用继承，因为这会将继承的上下文暴露给这样的池线
+      */   
+	public void setThreadContextInheritable(boolean threadContextInheritable) {
+		this.threadContextInheritable = threadContextInheritable;
+	}
+
+```
+
+
+
+反正就是说不建议使用 InheritableThreadLocal。所以最好别通过这种方式来处理。最后还是选择手动处理，在多线程调用的时候
+
+```java
+//手动在主线程获取requestAttributes
+RequestAttributes requestAttributes = RequestContextHolder.getRequestAttributes();
+
+MultiThreadTransaction.Result result = multiThreadTransaction.executeWithTransaction(dataList, 20, simpleList -> {
+        
+        //放入子线程里
+        RequestContextHolder.setRequestAttributes(requestAttributes);
+
+        //....其他代码
+}
+```
